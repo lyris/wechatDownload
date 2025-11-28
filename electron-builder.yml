@@ -48,4 +48,4 @@ publish:
   repo: wechatDownload
 releaseInfo:
   releaseNotes: |
-   修复单线程下载无法获取评论的问题
+   修复无法正常下载的bug

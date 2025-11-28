@@ -83,6 +83,8 @@ class DownloadOption {
   public dlMarkdown?: number;
   // 下载为pdf
   public dlPdf?: number;
+  // 下载为word
+  public dlWord?: number;
   // 保存至mysql
   public dlMysql?: number;
   // 下载音频到本地
@@ -173,7 +175,9 @@ enum NwrEnum {
   BATCH_FINISH, // 多个下载结束，输出日志并做结束处理
   CLOSE, // 结束线程
   PDF, // 创建pdf
-  PDF_FINISHED // 创建pdf完成
+  PDF_FINISHED, // 创建pdf完成
+  WORD, // 创建word
+  WORD_FINISHED // 创建word完成
 }
 // 下载事件枚举类
 enum DlEventEnum {
@@ -248,6 +252,15 @@ class Service {
           $ele.attr('width', width);
         }
       }
+    });
+    // 处理加粗标签
+    // 找到所有具有 style 属性且 style 属性包含 "font-weight: bold" 的 span 标签
+    $('span[style*="font-weight: bold"]').each((_, elem) => {
+      // 创建一个 <strong> 标签
+      const strong = $('<strong></strong>');
+      // 将 span 标签的内部 HTML 移动到 <strong> 标签中
+      strong.html($(elem).html() || '');
+      $(elem).replaceWith(strong);
     });
     return $;
   }
@@ -469,13 +482,23 @@ class Service {
         font-size: 14px;
         padding: 2px;
       }
+      section span {
+        display: block;
+        margin-block-start: 1em;
+        margin-block-end: 1em;
+        margin-inline-start: 0px;
+        margin-inline-end: 0px;
+        unicode-bidi: isolate;
+      }
       </style>
     `;
   }
   /*
    * 处理评论的js
+   * showAllComment: 是否展开全部评论
+   * showLogo: 是否展示头像
    */
-  public getHtmlComment(commentList, replyDetailMap, showAllComment = false): string {
+  public getHtmlComment(commentList, replyDetailMap, showAllComment = false, showLogo = true): string {
     return `
     <script type="text/javascript">
       const electedCommentArr = ${JSON.stringify(commentList)}
@@ -487,7 +510,7 @@ class Service {
         
         for (const electedComment of electedCommentArr) {
           var contentId = electedComment['content_id']
-          var logoUrl = electedComment['logo_url']
+          var logoUrl = ${showLogo ? "electedComment['logo_url']" : '""'}
           var nickName = electedComment['nick_name']
           var provinceName = getPlaceName(electedComment)
           var content = electedComment['content']
@@ -505,7 +528,7 @@ class Service {
 
           var replyStr = ''
           for (const replyItem of replyList) {
-            var replyLogoUrl = replyItem['logo_url']
+            var replyLogoUrl = ${showLogo ? "replyItem['logo_url']" : '""'}
             var replyNickName = replyItem['nick_name']
             if (replyItem['is_from'] == 2) {
               replyNickName += '(作者)'
@@ -515,22 +538,18 @@ class Service {
             var replyProvinceName = getPlaceName(replyItem)
             var replyContent = replyItem['content']
             replyStr += \`<div class="reply">
-                <div>
-                  <img src="\${replyLogoUrl}">
-                </div>
+                \${replyLogoUrl ? '<div><img src="'+replyLogoUrl+'"></div>' : ''}
                 <div class="right-div">
-                  <span class="nick-name">\${replyNickName}</span><span class="native-place">\${replyProvinceName ? "来自" + replyProvinceName : ""}</span>
+                  <span class="nick-name">\${replyNickName}</span><span class="native-place">\${replyProvinceName ? " 来自" + replyProvinceName : ""}</span>
                   <div class="content">\${toNickNameStr + replyContent}</div>
                 </div>
               </div>\`
           }
           
           var itemStr = \`<div class="comment-item">
-            <div>
-              <img src="\${logoUrl}">
-            </div>
+            \${logoUrl ? '<div><img src="'+logoUrl+'"></div>' : ''}
             <div class="right-div">
-              <span class="nick-name">\${nickName}</span><span class="native-place">\${provinceName ? "来自" + provinceName : ""}</span>
+              <span class="nick-name">\${nickName}</span><span class="native-place">\${provinceName ? " 来自" + provinceName : ""}</span>
               <div class="content">\${content}</div>
               \${moreStr}
               \${replyStr}
@@ -556,16 +575,14 @@ class Service {
             break;
           }
         }
-        let logoUrl = selectedComment['logo_url']
+        let logoUrl = ${showLogo ? "selectedComment['logo_url']" : '""'}
         let nickName = selectedComment['nick_name']
         let provinceName = getPlaceName(selectedComment)
         let content = selectedComment['content']
         document.querySelector(".dialog .d-top").innerHTML = \`<div class="comment-item">
-                <div>
-                  <img src="\${logoUrl}">
-                </div>
+                \${logoUrl ? '<div><img src="'+logoUrl+'"></div>' : ''}
                 <div class="right-div">
-                  <span class="nick-name">\${nickName}</span><span class="native-place">\${provinceName ? "来自" + provinceName : ""}</span>
+                  <span class="nick-name">\${nickName}</span><span class="native-place">\${provinceName ? " 来自" + provinceName : ""}</span>
                   <div class="content">\${content}</div>
                 </div>
               </div>\`
@@ -575,19 +592,16 @@ class Service {
         let applyHtml = '<div class="a-desc">全部回复</div>'
         if (replyArr && replyArr.length > 0) {
           for (const replyItem of replyArr) {
-            let replyLogoUrl = replyItem['logo_url']
+            let replyLogoUrl = ${showLogo ? "replyItem['logo_url']" : '""'}
             let replyNickName = replyItem['nick_name']
             let replyProvinceName = getPlaceName(replyItem)
             let replyContent = replyItem['content']
             let replyToNickName = replyItem['to_nick_name']
             let toNickNameStr = replyToNickName ? \`回复<span class="reply-nick">\${replyToNickName}</span>：\` : ''
             applyHtml += \`<div class="comment-item">
-                <div>
-                  <img
-                    src="\${replyLogoUrl}">
-                </div>
+                \${replyLogoUrl ? '<div><img src="'+replyLogoUrl+'"></div>' : ''}
                 <div class="right-div">
-                  <span class="nick-name">\${replyNickName}</span><span class="native-place">\${replyProvinceName ? "来自" + replyProvinceName : ""}</span>
+                  <span class="nick-name">\${replyNickName}</span><span class="native-place">\${replyProvinceName ? " 来自" + replyProvinceName : ""}</span>
                   <div class="content">\${toNickNameStr + replyContent}</div>
                 </div>
               </div>\`
@@ -642,6 +656,15 @@ class Service {
     }
     htmlStr += '</div>';
     return htmlStr;
+  }
+  // 对markdown内容进行清洗
+  public cleanMarkdown(markdown: string): string {
+    // 如果markdown不是以#开头，就删除第二行并且开头添加#
+    if (!markdown.startsWith('#')) {
+      markdown = markdown.replace(/\n=+/, '');
+      markdown = '# ' + markdown;
+    }
+    return markdown.replaceAll(/ {1,2}\s\*\*/g, '**');
   }
   /*
    * markdown格式的评论内容
@@ -809,7 +832,7 @@ class Service {
    * 获取html源码中的comment_id
    */
   commentIdRegex = /var comment_id = "(.*)" \|\| "(.*)" \* 1;/;
-  postCommentIdRegex = /getXmlValue\('comment_id\.DATA'\)\s?:\s?'(\d*)';/;
+  postCommentIdRegex = /var comment_id = '(.*)' \|\|/;
   public matchCommentId(html: string): string {
     let match = this.commentIdRegex.exec(html);
     if (match) {

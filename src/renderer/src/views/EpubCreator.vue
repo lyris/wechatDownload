@@ -39,8 +39,6 @@
 
 <script setup lang="ts">
 import { OpenDialogOptions } from 'electron';
-import { ElScrollbar } from 'element-plus';
-import { reactive } from 'vue';
 
 class LogInfo {
   msg: string;

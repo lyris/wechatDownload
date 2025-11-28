@@ -14,6 +14,7 @@ import * as fs from 'fs';
 import icon from '../../resources/icon.png?asset';
 import * as child_process from 'child_process';
 import * as iconv from 'iconv-lite';
+import { asBlob } from 'html-docx-js-typescript';
 
 import electronUpdater, { type AppUpdater, type UpdateInfo } from 'electron-updater';
 
@@ -132,7 +133,7 @@ app.whenReady().then(() => {
     }
   });
   // 根据url下载单篇文章
-  ipcMain.on('download-one', (_event, url: string) => downloadOne(url));
+  ipcMain.on('download-one', (_event, urlArr: string[]) => downloadOne(urlArr));
   // 批量下载，开启公号文章监测，获取用户参数
   ipcMain.on('monitor-article', () => monitorArticle());
   // 批量下载，开启公号文章监测，获取用户参数和文章地址
@@ -258,10 +259,10 @@ function installCAFile(filePath: string) {
 /*
  * 下载单个页面
  */
-async function downloadOne(url: string) {
-  outputLog(`正在下载文章，url：${url}`);
+async function downloadOne(urlArr: string[]) {
+  outputLog(`正在下载文章，url：${urlArr}`);
   // 开启线程下载
-  createDlWorker(DlEventEnum.ONE, url);
+  createDlWorker(DlEventEnum.ONE, urlArr);
 }
 
 /*
@@ -295,6 +296,9 @@ function createDlWorker(dlEvent: DlEventEnum, data?) {
         break;
       case NwrEnum.PDF:
         html2Pdf(nwResp.data);
+        break;
+      case NwrEnum.WORD:
+        html2Word(nwResp.data);
     }
   });
 
@@ -311,12 +315,12 @@ async function html2Pdf(pdfInfo: PdfInfo) {
   const htmlPath = path.join(pdfInfo.savePath, 'pdf.html');
   pdfWindow.loadFile(htmlPath);
 
-  pdfWindow.webContents.on('did-finish-load', () => {
+  pdfWindow.webContents.on('did-finish-load', async () => {
     pdfWindow.webContents
       .printToPDF({})
       .then((data) => {
         const fileName = pdfInfo.fileName || 'index';
-        fs.writeFileSync(path.join(pdfInfo.savePath, `${fileName}.pdf`), data);
+        fs.writeFileSync(path.join(pdfInfo.savePath, `${fileName}.pdf`), data as any);
         outputLog(`【${pdfInfo.title}】保存PDF完成`, true);
       })
       .catch((error) => {
@@ -329,6 +333,35 @@ async function html2Pdf(pdfInfo: PdfInfo) {
         // 任务完成，通知worker线程
         worker?.postMessage(new NodeWorkerResponse(NwrEnum.PDF_FINISHED, '', pdfInfo.id));
       });
+  });
+}
+
+async function html2Word(pdfInfo: PdfInfo) {
+  const pdfWindow = new BrowserWindow({
+    show: false,
+    width: 1000,
+    height: 800
+  });
+
+  const htmlPath = path.join(pdfInfo.savePath, 'word.html');
+  pdfWindow.loadFile(htmlPath);
+
+  pdfWindow.webContents.on('did-finish-load', async () => {
+    try {
+      const htmlString = await pdfWindow.webContents.executeJavaScript('document.documentElement.outerHTML');
+      asBlob(htmlString).then((data) => {
+        const fileName = pdfInfo.fileName || 'index';
+        fs.writeFileSync(path.join(path.join(pdfInfo.savePath, `${fileName}.docx`)), data as any);
+      });
+    } catch (error) {
+      logger.error(`保存WORD失败:${pdfInfo.title}`, error);
+      outputLog(`【${pdfInfo.title}】保存WORD失败`, true);
+    } finally {
+      pdfWindow.close();
+      fs.unlink(htmlPath, () => {});
+      // 任务完成，通知worker线程
+      worker?.postMessage(new NodeWorkerResponse(NwrEnum.WORD_FINISHED, '', pdfInfo.id));
+    }
   });
 }
 
@@ -348,8 +381,8 @@ async function monitorArticle() {
     }
     DL_TYPE = DlEventEnum.BATCH_WEB;
     // 开启代理
-    AnyProxy.utils.systemProxyMgr.enableGlobalProxy('127.0.0.1', '8001');
-    AnyProxy.utils.systemProxyMgr.enableGlobalProxy('127.0.0.1', '8001', 'https');
+    AnyProxy.utils.systemProxyMgr.enableGlobalProxy('127.0.0.1', '9527');
+    AnyProxy.utils.systemProxyMgr.enableGlobalProxy('127.0.0.1', '9527', 'https');
     outputLog('下载来源为网络');
     outputLog('代理开启成功，准备批量下载...', true);
     outputLog('请在微信打开任意一篇需要批量下载的公号的文章', true);
@@ -373,8 +406,8 @@ async function monitorLimitArticle() {
   DL_TYPE = DlEventEnum.BATCH_SELECT;
   articleArr = [];
   // 开启代理
-  AnyProxy.utils.systemProxyMgr.enableGlobalProxy('127.0.0.1', '8001');
-  AnyProxy.utils.systemProxyMgr.enableGlobalProxy('127.0.0.1', '8001', 'https');
+  AnyProxy.utils.systemProxyMgr.enableGlobalProxy('127.0.0.1', '9527');
+  AnyProxy.utils.systemProxyMgr.enableGlobalProxy('127.0.0.1', '9527', 'https');
   outputLog('代理开启成功，准备监控下载...');
   outputLog('请在微信打开需要下载的文章，可打开多篇文章', true);
   outputLog('<p>最后再点击一次 <strong>监控下载</strong> 按钮即可开始下载</p>', true, true);
@@ -398,14 +431,14 @@ async function stopMonitorLimitArticle() {
  */
 function createProxy(): AnyProxy.ProxyServer {
   const options: AnyProxy.ProxyOptions = {
-    port: 8001,
+    port: 9527,
     forceProxyHttps: true,
     silent: true,
     rule: {
       summary: 'My Custom Rule',
       beforeSendResponse(requestDetail, responseDetail) {
         // 批量下载
-        if (DL_TYPE == DlEventEnum.BATCH_WEB && requestDetail.url.indexOf('https://mp.weixin.qq.com/mp/getbizbanner') == 0) {
+        if (DL_TYPE == DlEventEnum.BATCH_WEB && requestDetail.url.indexOf('https://mp.weixin.qq.com/s') == 0) {
           const uin = HttpUtil.getQueryVariable(requestDetail.url, 'uin');
           const biz = HttpUtil.getQueryVariable(requestDetail.url, '__biz');
           const key = HttpUtil.getQueryVariable(requestDetail.url, 'key');
@@ -450,18 +483,20 @@ function createProxy(): AnyProxy.ProxyServer {
           }
         }
         // 单条下载
-        if (DL_TYPE == DlEventEnum.BATCH_SELECT && requestDetail.url.indexOf('https://mp.weixin.qq.com/mp/geticon') == 0) {
+        if (DL_TYPE == DlEventEnum.BATCH_SELECT && requestDetail.url.indexOf('https://mp.weixin.qq.com/s') == 0) {
           const headers = requestDetail.requestOptions.headers;
           if (headers) {
-            const referer = headers['Referer'] as string;
-            const uin = HttpUtil.getQueryVariable(referer, 'uin');
-            const biz = HttpUtil.getQueryVariable(referer, '__biz');
-            const key = HttpUtil.getQueryVariable(referer, 'key');
-            const mid = HttpUtil.getQueryVariable(referer, 'mid');
-            const sn = HttpUtil.getQueryVariable(referer, 'sn');
-            const chksm = HttpUtil.getQueryVariable(referer, 'chksm');
-            const idx = HttpUtil.getQueryVariable(referer, 'idx');
+            // const referer = headers['Referer'] as string;
+            const uin = HttpUtil.getQueryVariable(requestDetail.url, 'uin');
+            const biz = HttpUtil.getQueryVariable(requestDetail.url, '__biz');
+            const key = HttpUtil.getQueryVariable(requestDetail.url, 'key');
+            const mid = HttpUtil.getQueryVariable(requestDetail.url, 'mid');
+            const sn = HttpUtil.getQueryVariable(requestDetail.url, 'sn');
+            const chksm = HttpUtil.getQueryVariable(requestDetail.url, 'chksm');
+            const idx = HttpUtil.getQueryVariable(requestDetail.url, 'idx');
+            const passTicket = HttpUtil.getQueryVariable(requestDetail.url, 'pass_ticket');
             const gzhInfo = new GzhInfo(biz, key, uin);
+            gzhInfo.passTicket = passTicket;
             gzhInfo.Cookie = headers['Cookie'] as string;
             gzhInfo.UserAgent = headers['User-Agent'] as string;
 

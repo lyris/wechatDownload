@@ -46,7 +46,7 @@
             </el-row>
             <el-row>
               <el-col :span="12">
-                <el-checkbox v-model="settingInfo.dlMysql" label="保存至Mysql" size="large" />
+                <el-checkbox v-model="settingInfo.dlWord" label="下载为word文档" size="large" />
               </el-col>
               <el-col :span="12">
                 <el-checkbox v-model="settingInfo.dlCommentReply" label="下载评论回复" size="large" />
@@ -54,7 +54,7 @@
             </el-row>
             <el-row>
               <el-col :span="12">
-                <el-checkbox v-model="settingInfo.skinExist" label="跳过现有文章" size="large" />
+                <el-checkbox v-model="settingInfo.dlMysql" label="保存至Mysql" size="large" />
               </el-col>
               <el-col :span="12">
                 <el-checkbox v-model="settingInfo.sourceUrl" label="添加原文链接" size="large" />
@@ -62,11 +62,17 @@
             </el-row>
             <el-row>
               <el-col :span="12">
-                <el-checkbox v-model="settingInfo.saveMeta" label="保存元数据" size="large" />
+                <el-checkbox v-model="settingInfo.skinExist" label="跳过现有文章" size="large" />
               </el-col>
               <el-col :span="12">
                 <el-checkbox v-model="settingInfo.classifyDir" label="按公号分类保存" size="large" />
               </el-col>
+            </el-row>
+            <el-row>
+              <el-col :span="12">
+                <el-checkbox v-model="settingInfo.saveMeta" label="保存元数据" size="large" />
+              </el-col>
+              <el-col :span="12"></el-col>
             </el-row>
           </div>
         </el-col>
@@ -97,9 +103,9 @@
             <div>
               <span title="单位毫秒">
                 下载间隔
-                <el-input-number v-model="settingInfo.dlInterval" controls-position="right" precision="0" style="width: 100px" size="small" :min="0" />
+                <el-input-number v-model="settingInfo.dlInterval" controls-position="right" :precision="0" style="width: 100px" size="small" :min="0" />
               </span>
-              <span class="batch-limit"> 单批数量：<el-input-number v-model="settingInfo.batchLimit" controls-position="right" precision="0" style="width: 100px" size="small" :min="0" /> </span>
+              <span class="batch-limit"> 单批数量：<el-input-number v-model="settingInfo.batchLimit" controls-position="right" :precision="0" style="width: 100px" size="small" :min="0" /> </span>
             </div>
           </div>
           <div v-if="settingInfo.dlMysql" class="div-border div-pd">
@@ -151,7 +157,6 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, watch } from 'vue';
 import { OpenDialogOptions } from 'electron';
 import { ProgressInfo } from 'builder-util-runtime';
 
@@ -170,6 +175,8 @@ const settingInfo = reactive({
   dlMarkdown: 1,
   // 下载为pdf
   dlPdf: 0,
+  // 下载为word
+  dlWord: 0,
   // 保存至mysql
   dlMysql: 0,
   // 下载音频到本地

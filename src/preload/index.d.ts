@@ -14,7 +14,7 @@ declare global {
       // 选择路径
       showOpenDialog(options: OpenDialogOptions, callbackMsg: string);
       // 下载详情页数据
-      downloadOne(url: string);
+      downloadOne(url: string[]);
       // 开启公号文章监测（获取用户参数）
       monitorArticle();
       // 开启公号文章监测（历史接口被封使用，获取文章地址）

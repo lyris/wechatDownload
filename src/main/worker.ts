@@ -16,6 +16,7 @@ const onRetry = (retryCount, _err, requestConfig) => {
   logger.info(`第${retryCount}次请求失败`, requestConfig.url, requestConfig.params);
 };
 axiosRetry(axios, { retries: 3, onRetry });
+axios.defaults.headers.common['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 NetType/WIFI MicroMessenger/7.0.20.1781(0x6700143B) WindowsWechat(0x63090c33) XWEB/11581 Flue';
 
 const service = new Service();
 // html转markdown的TurndownService
@@ -47,6 +48,7 @@ let CONNECTION: mysql.Connection;
 let CONNECTION_STATE = false;
 // 存放保存pdf任务钩子的map
 const PDF_RESOLVE_MAP = new Map();
+const WORD_RESOLVE_MAP = new Map();
 // 失败次数map
 const FAIL_COUNT_MAP = new Map();
 // 触发公众号反爬机制时重试等待时间(单位秒)
@@ -77,11 +79,12 @@ port.on('message', async (message: NodeWorkerResponse) => {
 
     // 下载单个文章
     if (dlEvent == DlEventEnum.ONE) {
-      const url = workerData.data;
-      const articleInfo = new ArticleInfo(null, null, url);
-      await axiosDlOne(articleInfo);
-      resp(NwrEnum.ONE_FINISH, '');
-      finish();
+      const urlArr = workerData.data;
+      await batchDownloadFromArr(urlArr);
+      // const articleInfo = new ArticleInfo(null, null, url);
+      // await axiosDlOne(articleInfo);
+      // resp(NwrEnum.ONE_FINISH, '');
+      // finish();
     } else if (dlEvent == DlEventEnum.BATCH_WEB) {
       // 从微信接口批量下载
       GZH_INFO = workerData.data;
@@ -99,6 +102,14 @@ port.on('message', async (message: NodeWorkerResponse) => {
     if (resolve) {
       resolve();
       PDF_RESOLVE_MAP.delete(pdfKey);
+    }
+  } else if (message.code == NwrEnum.WORD_FINISHED) {
+    // word保存完成的回调
+    const wordKey = message.data || '';
+    const resolve = WORD_RESOLVE_MAP.get(wordKey);
+    if (resolve) {
+      resolve();
+      WORD_RESOLVE_MAP.delete(wordKey);
     }
   }
 });
@@ -131,11 +142,13 @@ async function axiosDlOne(articleInfo: ArticleInfo, reCall = false) {
   }
 
   const gzhInfo = articleInfo.gzhInfo;
+  articleInfo.contentUrl = articleInfo.contentUrl.replace(/&amp;/g, '&');
   await axios
     .get(articleInfo.contentUrl, {
       params: {
         key: gzhInfo ? gzhInfo.key : '',
-        uin: gzhInfo ? gzhInfo.uin : ''
+        uin: gzhInfo ? gzhInfo.uin : '',
+        pass_ticket: gzhInfo ? gzhInfo.passTicket : ''
       }
     })
     .then((response) => {
@@ -206,7 +219,7 @@ async function dlOne(articleInfo: ArticleInfo, saveToDb = true) {
   const article = _article;
 
   // 触发了公众号的反爬机制，进行重试
-  if (article.title == '验证') {
+  if ((!article.title || article.title == '验证') && (!article.textContent || !article.textContent.includes('因违规无法查看'))) {
     let failCount = FAIL_COUNT_MAP.get(articleInfo.contentUrl) || 0;
     failCount++;
     if (failCount > FAIL_RETRY) {
@@ -298,10 +311,11 @@ async function dlOne(articleInfo: ArticleInfo, saveToDb = true) {
   if (1 == downloadOption.dlMarkdown) {
     proArr.push(
       new Promise((resolve) => {
-        const markdownStr = turndownService.turndown($.html());
+        let markdownStr = turndownService.turndown($.html());
+        markdownStr = service.cleanMarkdown(markdownStr);
         // 添加评论
         const commentStr = service.getMarkdownComment(articleInfo.commentList, articleInfo.replyDetailMap);
-        fs.writeFile(path.join(savePath, `${articleInfo.fileName}.md`), markdownStr + commentStr, () => {
+        fs.writeFile(path.join(savePath, timeStr + `${articleInfo.fileName}.md`), markdownStr + commentStr, () => {
           resp(NwrEnum.SUCCESS, `【${article.title}】保存Markdown完成`);
           resolve();
         });
@@ -323,7 +337,7 @@ async function dlOne(articleInfo: ArticleInfo, saveToDb = true) {
         const htmlReadabilityPage = $html('#readability-page-1');
         // 评论的div块
         htmlReadabilityPage.after('<div class="foot"></div><div class="dialog"><div class="dcontent"><div class="aclose"><span>留言</span><a class="close"href="javascript:closeDialog();">&times;</a></div><div class="contain"><div class="d-top"></div><div class="all-deply"></div></div></div></div>');
-        fs.writeFile(path.join(savePath, `${articleInfo.fileName}.html`), $html.html(), () => {
+        fs.writeFile(path.join(savePath, timeStr + `${articleInfo.fileName}.html`), $html.html(), () => {
           resp(NwrEnum.SUCCESS, `【${article.title}】保存HTML完成`);
           resolve();
         });
@@ -349,9 +363,56 @@ async function dlOne(articleInfo: ArticleInfo, saveToDb = true) {
           resp(NwrEnum.SUCCESS, `【${article.title}】保存pdf的html文件完成`);
           const articleId = md5(articleInfo.contentUrl);
           // 通知main线程，保存pdf
-          resp(NwrEnum.PDF, '保存pdf', new PdfInfo(articleId, article.title, savePath, articleInfo.fileName));
+          resp(NwrEnum.PDF, '保存pdf', new PdfInfo(articleId, article.title, savePath, timeStr + articleInfo.fileName));
           // 保存回调钩子，等待main线程保存pdf完成
           PDF_RESOLVE_MAP.set(articleId, resolve);
+        });
+      })
+    );
+  }
+
+  // 判断是否保存word
+  if (1 == downloadOption.dlWord) {
+    proArr.push(
+      new Promise((resolve) => {
+        const $pdf = cheerio.load($.html());
+
+        // 将图片转成base64
+        const imgArr = $pdf('img');
+        imgArr.each(function (_, elem) {
+          const $ele = $(elem);
+          // 文件url
+          const fileUrl = $ele.attr('data-src');
+          if (fileUrl) {
+            $ele.attr('src', fileUrl);
+          }
+        });
+
+        // 将<span[leaf]>转成<p>
+        $pdf('span[leaf]').each(function () {
+          const $element = $pdf(this);
+          const $p = $pdf('<p>').html($element.html() || '');
+          $element.replaceWith($p);
+        });
+
+        // 添加样式美化
+        const headEle = $pdf('head');
+        headEle.append(service.getArticleCss());
+        // 添加评论数据
+        if (articleInfo.commentList) {
+          headEle.after(service.getHtmlComment(articleInfo.commentList, articleInfo.replyDetailMap, true, false));
+        }
+        const htmlReadabilityPage = $pdf('#readability-page-1');
+        // 评论的div块
+        htmlReadabilityPage.after('<div class="foot"></div><div class="dialog"><div class="dcontent"><div class="aclose"><span>留言</span><a class="close"href="javascript:closeDialog();">&times;</a></div><div class="contain"><div class="d-top"></div><div class="all-deply"></div></div></div></div>');
+
+        fs.writeFile(path.join(savePath, 'word.html'), $pdf.html(), () => {
+          resp(NwrEnum.SUCCESS, `【${article.title}】保存word的html文件完成`);
+          const articleId = md5(articleInfo.contentUrl);
+          // 通知main线程，保存word
+          resp(NwrEnum.WORD, '保存word', new PdfInfo(articleId, article.title, savePath, timeStr + articleInfo.fileName));
+          // 保存回调钩子，等待main线程保存pdf完成
+          WORD_RESOLVE_MAP.set(articleId, resolve);
         });
       })
     );
@@ -366,7 +427,7 @@ async function dlOne(articleInfo: ArticleInfo, saveToDb = true) {
         if (1 == downloadOption.cleanMarkdown) {
           const cleanHtml = service.getTmpHtml($.html());
 
-          markdownStr = turndownService.turndown(cleanHtml);
+          markdownStr = service.cleanMarkdown(turndownService.turndown(cleanHtml));
         }
 
         const modSqlParams = [articleInfo.title, articleInfo.html, articleInfo.author, articleInfo.contentUrl, articleInfo.datetime, articleInfo.copyrightStat, JSON.stringify(articleInfo.commentList), JSON.stringify(articleInfo.replyDetailMap), articleInfo.digest, articleInfo.cover, articleInfo.metaInfo?.jsName, markdownStr, articleInfo.title, articleInfo.datetime];
@@ -508,8 +569,8 @@ function parseMeta(articleInfo: ArticleInfo, $meta: any, byline?: string) {
     jsName = getEleText($meta('#js_name'));
   }
   // 封面
-  let cover: string | undefined;
-  if (!articleInfo.cover) {
+  let cover = articleInfo.cover;
+  if (!cover) {
     const coverEles = $meta('meta[property=og:image]');
     if (coverEles) {
       if (coverEles.length > 1) {
@@ -650,7 +711,8 @@ async function downloadComment(articleInfo: ArticleInfo) {
           __biz: gzhInfo.biz,
           key: gzhInfo.key,
           uin: gzhInfo.uin,
-          comment_id: commentId
+          comment_id: commentId,
+          pass_ticket: gzhInfo.passTicket
         },
         headers: headers
       })
@@ -689,7 +751,8 @@ async function downloadComment(articleInfo: ArticleInfo) {
                 uin: gzhInfo.uin,
                 comment_id: commentId,
                 content_id: commentItem.content_id,
-                max_reply_id: replyInfo.max_reply_id
+                max_reply_id: replyInfo.max_reply_id,
+                pass_ticket: gzhInfo.passTicket
               },
               headers: headers
             })
@@ -919,6 +982,31 @@ function addSongDiv($ele, musicName: string, songSrc: string, tmpSongSrc: string
     </div>
   </div>
 `);
+}
+
+/*
+ * 批量下载(来源是网络)
+ */
+async function batchDownloadFromArr(urlArr: string[]) {
+  const articleArr: ArticleInfo[] = [];
+  for (const url of urlArr) {
+    const articleInfo: ArticleInfo = new ArticleInfo(null, null, url);
+    articleArr.push(articleInfo);
+  }
+
+  const promiseArr: Promise<void>[] = [];
+  for (const article of articleArr) {
+    article.gzhInfo = GZH_INFO;
+    promiseArr.push(axiosDlOne(article));
+    // 下载间隔
+    await sleep(downloadOption.dlInterval);
+  }
+  // 栅栏，等待所有文章下载完成
+  for (const articlePromise of promiseArr) {
+    await articlePromise;
+  }
+  resp(NwrEnum.ONE_FINISH, '');
+  finish();
 }
 
 /*

@@ -1,6 +1,6 @@
 {
   "name": "wechatDownload",
-  "version": "1.7.1",
+  "version": "1.8.3",
   "description": "An Electron application with Vue and TypeScript",
   "main": "./out/main/index.mjs",
   "author": "javaedit.com",
@@ -55,6 +55,7 @@
     "electron-vite": "^2.0.0",
     "eslint": "^8.56.0",
     "eslint-plugin-vue": "^9.20.1",
+    "html-docx-js-typescript": "^0.1.5",
     "prettier": "^3.2.4",
     "typescript": "^5.3.3",
     "unplugin-auto-import": "^0.17.5",

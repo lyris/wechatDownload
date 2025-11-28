@@ -2,7 +2,7 @@
   <el-container style="height: 100%">
     <el-header height="40px">
       <div class="tool-div" style="display: flex">
-        <el-input v-model="dlUrl" placeholder="输入微信文章链接，点击右侧下载按钮" />
+        <el-input type="textarea" :autosize="{ minRows: 1, maxRows: 2 }" v-model="dlUrl" placeholder="输入微信文章链接，点击右侧下载按钮(可填多条链接，一行一条)" />
         <div class="tool-div-btn">
           <el-button type="primary" @click="dlOne">下载</el-button>
           <el-button type="primary" :disabled="btnInfo.batchBtn" @click="dlBatch">批量下载</el-button>
@@ -40,7 +40,6 @@
 
 <script setup lang="ts">
 import { ElScrollbar } from 'element-plus';
-import { nextTick, reactive, ref } from 'vue';
 
 const dlUrl = ref('');
 const innerRef = ref<HTMLDivElement>();
@@ -65,9 +64,24 @@ const btnInfo = reactive({
  * 下载按钮事件
  */
 function dlOne() {
-  const url = dlUrl.value;
-  const checkResult = checkURL(url);
-  if (!checkResult) {
+  const urlArr = dlUrl.value.split('\n');
+
+  for (const url of urlArr) {
+    if (!url) {
+      continue;
+    }
+    const checkResult = checkURL(url);
+    if (!checkResult) {
+      window.api.showMessageBox({
+        type: 'warning',
+        message: '请输入正确的url'
+      });
+      return;
+    }
+  }
+
+  const filterArr = urlArr.filter((item) => item && item !== '');
+  if (filterArr.length === 0) {
     window.api.showMessageBox({
       type: 'warning',
       message: '请输入正确的url'
@@ -75,7 +89,7 @@ function dlOne() {
     return;
   }
   // 下载详情页数据
-  window.api.downloadOne(url);
+  window.api.downloadOne(filterArr);
 }
 /**
  * 批量下载按钮事件
