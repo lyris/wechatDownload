@@ -1,6 +1,33 @@
 import { app, dialog, shell, ipcMain, BrowserWindow, OpenDialogOptions, MessageBoxOptions } from 'electron';
 import { electronApp, optimizer, is } from '@electron-toolkit/utils';
 import Store from 'electron-store';
+
+// Inline shim to avoid initialization issues
+const is = {
+  get dev() {
+    return !app.isPackaged;
+  }
+};
+const electronApp = {
+  setAppUserModelId(id: string) {
+    if (process.platform === 'win32') {
+      app.setAppUserModelId(is.dev ? process.execPath : id);
+    }
+  }
+};
+const optimizer = {
+  watchWindowShortcuts(window: Electron.BrowserWindow) {
+    window.webContents.on('before-input-event', (_event, input) => {
+      if (input.key === 'F12') {
+        if (window.webContents.isDevToolsOpened()) {
+          window.webContents.closeDevTools();
+        } else {
+          window.webContents.openDevTools();
+        }
+      }
+    });
+  }
+};
 import * as mysql from 'mysql2';
 import * as AnyProxy from 'anyproxy';
 import * as path from 'path';
@@ -24,7 +51,7 @@ export function getAutoUpdater(): AppUpdater {
   const { autoUpdater } = electronUpdater;
   return autoUpdater;
 }
-const autoUpdater = getAutoUpdater();
+let autoUpdater: AppUpdater;
 
 const exec = child_process.exec;
 const store = new Store();
@@ -79,6 +106,10 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  // Initialize autoUpdater after app is ready
+  autoUpdater = getAutoUpdater();
+  initAutoUpdater();
+
   setDefaultSetting();
 
   // Set app user model id for windows
@@ -698,69 +729,71 @@ function sendUpdateMessage(msg: any) {
   MAIN_WINDOW.webContents.send('update-msg', msg);
 }
 
-// 设置自动下载为false，也就是说不开始自动下载
-autoUpdater.autoDownload = false;
-// 检测下载错误
-autoUpdater.on('error', (error) => {
-  logger.error('更新异常', error);
-  sendUpdateMessage(updateMessage.error);
-});
+function initAutoUpdater() {
+  // 设置自动下载为false，也就是说不开始自动下载
+  autoUpdater.autoDownload = false;
+  // 检测下载错误
+  autoUpdater.on('error', (error) => {
+    logger.error('更新异常', error);
+    sendUpdateMessage(updateMessage.error);
+  });
 
-// 检测是否需要更新
-autoUpdater.on('checking-for-update', () => {
-  logger.info(updateMessage.checking);
-  sendUpdateMessage(updateMessage.checking);
-});
-// 检测到可以更新时
-autoUpdater.on('update-available', (releaseInfo: UpdateInfo) => {
-  const releaseNotes = releaseInfo.releaseNotes;
-  let releaseContent = '';
-  if (releaseNotes) {
-    if (typeof releaseNotes === 'string') {
-      releaseContent = <string>releaseNotes;
-    } else if (releaseNotes instanceof Array) {
-      releaseNotes.forEach((releaseNote) => {
-        releaseContent += `${releaseNote}\n`;
-      });
-    }
-  } else {
-    releaseContent = '暂无更新说明';
-  }
-  dialog
-    .showMessageBox({
-      type: 'info',
-      title: '应用有新的更新',
-      detail: releaseContent,
-      message: '发现新版本，是否现在更新？',
-      buttons: ['否', '是']
-    })
-    .then(({ response }) => {
-      if (response === 1) {
-        sendUpdateMessage(updateMessage.updateAva);
-        // 下载更新
-        autoUpdater.downloadUpdate();
+  // 检测是否需要更新
+  autoUpdater.on('checking-for-update', () => {
+    logger.info(updateMessage.checking);
+    sendUpdateMessage(updateMessage.checking);
+  });
+  // 检测到可以更新时
+  autoUpdater.on('update-available', (releaseInfo: UpdateInfo) => {
+    const releaseNotes = releaseInfo.releaseNotes;
+    let releaseContent = '';
+    if (releaseNotes) {
+      if (typeof releaseNotes === 'string') {
+        releaseContent = <string>releaseNotes;
+      } else if (releaseNotes instanceof Array) {
+        releaseNotes.forEach((releaseNote) => {
+          releaseContent += `${releaseNote}\n`;
+        });
       }
-    });
-});
-// 检测到不需要更新时
-autoUpdater.on('update-not-available', () => {
-  logger.info(updateMessage.updateNotAva);
-  sendUpdateMessage(updateMessage.updateNotAva);
-});
-// 更新下载进度
-autoUpdater.on('download-progress', (progress) => {
-  MAIN_WINDOW.webContents.send('download-progress', progress);
-});
-// 当需要更新的内容下载完成后
-autoUpdater.on('update-downloaded', () => {
-  logger.info('下载完成，准备更新');
-  dialog
-    .showMessageBox({
-      title: '安装更新',
-      message: '更新下载完毕，应用将重启并进行安装'
-    })
-    .then(() => {
-      // 退出并安装应用
-      setImmediate(() => autoUpdater.quitAndInstall());
-    });
-});
+    } else {
+      releaseContent = '暂无更新说明';
+    }
+    dialog
+      .showMessageBox({
+        type: 'info',
+        title: '应用有新的更新',
+        detail: releaseContent,
+        message: '发现新版本，是否现在更新？',
+        buttons: ['否', '是']
+      })
+      .then(({ response }) => {
+        if (response === 1) {
+          sendUpdateMessage(updateMessage.updateAva);
+          // 下载更新
+          autoUpdater.downloadUpdate();
+        }
+      });
+  });
+  // 检测到不需要更新时
+  autoUpdater.on('update-not-available', () => {
+    logger.info(updateMessage.updateNotAva);
+    sendUpdateMessage(updateMessage.updateNotAva);
+  });
+  // 更新下载进度
+  autoUpdater.on('download-progress', (progress) => {
+    MAIN_WINDOW.webContents.send('download-progress', progress);
+  });
+  // 当需要更新的内容下载完成后
+  autoUpdater.on('update-downloaded', () => {
+    logger.info('下载完成，准备更新');
+    dialog
+      .showMessageBox({
+        title: '安装更新',
+        message: '更新下载完毕，应用将重启并进行安装'
+      })
+      .then(() => {
+        // 退出并安装应用
+        setImmediate(() => autoUpdater.quitAndInstall());
+      });
+  });
+}
